@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookieOptions, equal, open, seal } from '../../../lib/auth/crypto';
 import type { LoginAttempt, Session } from '../../../lib/auth/types';
+import { actors } from '../../../lib/auth/authorization';
 
 export async function GET(request: NextRequest) {
   const attempt = open<LoginAttempt>(
@@ -43,7 +44,8 @@ export async function GET(request: NextRequest) {
     subject?: string;
     name?: string;
   };
-  if (identity.subject !== 'mock-thaid-123' || !identity.name) return fail();
+  const actor = identity.subject ? actors[identity.subject] : undefined;
+  if (!actor || identity.name !== actor.name) return fail();
   const session: Session = {
     sub: identity.subject,
     name: identity.name,

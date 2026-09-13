@@ -18,6 +18,8 @@ export function GET(request: NextRequest) {
   provider.searchParams.set('state', state);
   provider.searchParams.set('code_challenge', challenge(verifier));
   provider.searchParams.set('code_challenge_method', 'S256');
+  const persona = request.nextUrl.searchParams.get('persona');
+  if (persona) provider.searchParams.set('persona', persona);
   const response = NextResponse.redirect(provider);
   response.cookies.set(
     'oauth_attempt',

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { seal } from '../../../lib/auth/crypto';
 import type { MockCode } from '../../../lib/auth/types';
+import { actors } from '../../../lib/auth/authorization';
 
 export function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -17,8 +18,12 @@ export function GET(request: NextRequest) {
   }
   const code = seal(
     {
-      sub: 'mock-thaid-123',
-      name: 'Demo ThaiD User',
+      sub:
+        actors[params.get('persona') || 'mock-manager-10']?.sub ||
+        'mock-manager-10',
+      name:
+        actors[params.get('persona') || 'mock-manager-10']?.name ||
+        'Store 10 manager',
       codeChallenge: params.get('code_challenge')!,
       redirectUri: callback.toString(),
       expiresAt: Date.now() + 60_000,
