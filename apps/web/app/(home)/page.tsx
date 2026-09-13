@@ -29,6 +29,26 @@ export default async function Home({
       >
         Start mock ThaiD login
       </Link>
+      <section className="mt-6">
+        <h2 className="font-bold">Try an application identity</h2>
+        <div className="mt-2 flex flex-wrap gap-3 text-sm text-blue-700">
+          {[
+            ['Customer', 'mock-customer'],
+            ['Store 10 staff', 'mock-staff-10'],
+            ['Store 10 manager', 'mock-manager-10'],
+            ['Store 42 manager', 'mock-manager-42'],
+            ['HQ admin', 'mock-hq'],
+          ].map(([label, persona]) => (
+            <Link
+              key={persona}
+              href={`/auth/login?persona=${persona}`}
+              className="underline"
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+      </section>
       <div className="mt-10 grid gap-4 sm:grid-cols-2">
         <section className="rounded-xl border p-5">
           <h2 className="mb-2 font-bold">External provider</h2>
