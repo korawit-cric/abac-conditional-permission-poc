@@ -27,3 +27,25 @@ export interface UpdateLinkDto {
   url?: string;
   description?: string;
 }
+
+export type OrderStatus = 'PAID' | 'PREPARING' | 'READY' | 'REFUNDED';
+
+export interface OrderResponse {
+  id: string;
+  tenantId: string;
+  storeId: string;
+  region: string;
+  customerId: string;
+  status: OrderStatus;
+  total: number;
+}
+
+export interface AccessSummary {
+  actor: {
+    name: string;
+    role: 'CUSTOMER' | 'STORE_STAFF' | 'STORE_MANAGER' | 'HQ_ADMIN';
+    storeIds: string[];
+    tenantId: string;
+  };
+  examples: Array<{ label: string; allowed: boolean; reason: string }>;
+}

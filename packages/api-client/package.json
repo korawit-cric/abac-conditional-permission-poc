@@ -12,6 +12,10 @@
       "types": "./dist/links.d.ts",
       "import": "./dist/links.js"
     },
+    "./orders": {
+      "types": "./dist/orders.d.ts",
+      "import": "./dist/orders.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"

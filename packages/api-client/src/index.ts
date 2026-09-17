@@ -1,5 +1,6 @@
 // API definitions
 export { linksApi } from './links.js';
+export { ordersApi } from './orders.js';
 
 // Types
 export type {
@@ -8,4 +9,7 @@ export type {
   CreateLinkDto,
   UpdateLinkDto,
   Link,
+  AccessSummary,
+  OrderResponse,
+  OrderStatus,
 } from './types.js';
