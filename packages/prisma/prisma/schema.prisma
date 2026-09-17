@@ -19,3 +19,99 @@ model Link {
 
   @@map("links")
 }
+
+enum RoleCode {
+  CUSTOMER
+  STORE_STAFF
+  STORE_MANAGER
+  HQ_ADMIN
+}
+
+enum OrderStatus {
+  PAID
+  PREPARING
+  READY
+  REFUNDED
+}
+
+model User {
+  id            String          @id
+  name          String
+  tenantId      String          @map("tenant_id")
+  region        String
+  refundLimit   Decimal         @default(0) @map("refund_limit") @db.Decimal(12, 2)
+  customerId    String?         @map("customer_id")
+  roleId        Int             @map("role_id")
+  role          Role            @relation(fields: [roleId], references: [id])
+  assignedStores UserStore[]
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+model Role {
+  id          Int              @id @default(autoincrement())
+  code        RoleCode         @unique
+  users       User[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id    Int              @id @default(autoincrement())
+  code  String           @unique
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       Int        @map("role_id")
+  permissionId Int        @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Store {
+  id       String      @id
+  tenantId String      @map("tenant_id")
+  region   String
+  users    UserStore[]
+  orders   Order[]
+
+  @@index([tenantId])
+  @@map("stores")
+}
+
+model UserStore {
+  userId  String @map("user_id")
+  storeId String @map("store_id")
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, storeId])
+  @@map("user_stores")
+}
+
+model Order {
+  id         String      @id
+  tenantId   String      @map("tenant_id")
+  storeId    String      @map("store_id")
+  store      Store       @relation(fields: [storeId], references: [id])
+  region     String
+  customerId String      @map("customer_id")
+  status     OrderStatus
+  total      Decimal     @db.Decimal(12, 2)
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  @@index([tenantId, storeId])
+  @@index([tenantId, customerId])
+  @@map("orders")
+}
