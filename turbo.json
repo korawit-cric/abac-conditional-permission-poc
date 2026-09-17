@@ -5,8 +5,10 @@
     "NODE_ENV",
     "AUTH_COOKIE_SECRET",
     "API_PORT",
+    "API_PUBLIC_URL",
     "DATABASE_URL",
-    "WEB_ORIGIN"
+    "WEB_ORIGIN",
+    "WEB_URL"
   ],
   "tasks": {
     "dev": {

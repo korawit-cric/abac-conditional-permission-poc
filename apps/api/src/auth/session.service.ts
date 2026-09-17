@@ -1,31 +1,60 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { createDecipheriv, createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthenticatedActor } from './auth.types';
-
-type Session = { sub: string; name: string; expiresAt: number };
+import type { SessionCookie } from './auth-flow.types';
+import { hashToken, open, randomSecret, seal } from './auth.crypto';
 
 @Injectable()
 export class SessionService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async createSession(identity: { subject: string; displayName: string }) {
+    const user = await this.prisma.client.user.findUnique({
+      where: { id: identity.subject },
+    });
+    if (!user || user.name !== identity.displayName) return null;
+
+    const token = randomSecret();
+    const expiresAt = new Date(Date.now() + 60 * 60_000);
+    await this.prisma.client.authSession.create({
+      data: { tokenHash: hashToken(token), userId: user.id, expiresAt },
+    });
+    return seal(
+      { token, expiresAt: expiresAt.getTime() } satisfies SessionCookie,
+      'app-session',
+    );
+  }
+
   async authenticate(
     cookieHeader: string | undefined,
   ): Promise<AuthenticatedActor> {
-    const token = this.readCookie(cookieHeader, 'app_session');
-    const session = this.openSession(token);
-    if (!session || session.expiresAt < Date.now())
-      throw new UnauthorizedException('Authentication required');
+    const session = this.readSessionCookie(
+      this.readCookie(cookieHeader, 'app_session'),
+    );
+    if (!session) throw new UnauthorizedException('Authentication required');
 
-    const user = await this.prisma.client.user.findUnique({
-      where: { id: session.sub },
+    const stored = await this.prisma.client.authSession.findUnique({
+      where: { tokenHash: hashToken(session.token) },
       include: {
-        role: { include: { permissions: { include: { permission: true } } } },
-        assignedStores: true,
+        user: {
+          include: {
+            role: {
+              include: { permissions: { include: { permission: true } } },
+            },
+            assignedStores: true,
+          },
+        },
       },
     });
-    if (!user) throw new UnauthorizedException('Application user not found');
+    if (
+      !stored ||
+      stored.revokedAt ||
+      stored.expiresAt.getTime() < Date.now()
+    ) {
+      throw new UnauthorizedException('Session is expired or revoked');
+    }
 
+    const user = stored.user;
     return {
       id: user.id,
       name: user.name,
@@ -41,6 +70,49 @@ export class SessionService {
     };
   }
 
+  async revokeCurrentSession(cookieHeader: string | undefined) {
+    const session = this.readSessionCookie(
+      this.readCookie(cookieHeader, 'app_session'),
+    );
+    if (!session) return 0;
+    const result = await this.prisma.client.authSession.updateMany({
+      where: {
+        tokenHash: hashToken(session.token),
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  async revokeAllSessions(cookieHeader: string | undefined) {
+    const session = this.readSessionCookie(
+      this.readCookie(cookieHeader, 'app_session'),
+    );
+    if (!session) return 0;
+    const current = await this.prisma.client.authSession.findUnique({
+      where: { tokenHash: hashToken(session.token) },
+    });
+    if (
+      !current ||
+      current.revokedAt ||
+      current.expiresAt.getTime() < Date.now()
+    )
+      return 0;
+
+    const result = await this.prisma.client.authSession.updateMany({
+      where: { userId: current.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  private readSessionCookie(cookie: string | undefined) {
+    const session = open<SessionCookie>(cookie, 'app-session');
+    return session && session.expiresAt >= Date.now() ? session : null;
+  }
+
   private readCookie(
     header: string | undefined,
     name: string,
@@ -50,32 +122,5 @@ export class SessionService {
       .map((part) => part.trim())
       .find((part) => part.startsWith(`${name}=`))
       ?.slice(name.length + 1);
-  }
-
-  private openSession(token: string | undefined): Session | null {
-    const secret = process.env.AUTH_COOKIE_SECRET;
-    if (!token || !secret || Buffer.from(secret, 'base64url').length < 32)
-      return null;
-    try {
-      const [ivValue, dataValue, tagValue] = token.split('.');
-      if (!ivValue || !dataValue || !tagValue) return null;
-      const iv = Buffer.from(ivValue, 'base64url');
-      const tag = Buffer.from(tagValue, 'base64url');
-      if (iv.length !== 12 || tag.length !== 16) return null;
-      const key = createHash('sha256')
-        .update(secret)
-        .update('app-session')
-        .digest();
-      const decipher = createDecipheriv('aes-256-gcm', key, iv);
-      decipher.setAuthTag(tag);
-      return JSON.parse(
-        Buffer.concat([
-          decipher.update(Buffer.from(dataValue, 'base64url')),
-          decipher.final(),
-        ]).toString(),
-      ) as Session;
-    } catch {
-      return null;
-    }
   }
 }
