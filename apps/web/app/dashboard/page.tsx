@@ -3,6 +3,11 @@ import { redirect } from 'next/navigation';
 import { serverFetch } from '../../lib/fetch/server';
 
 export default async function Dashboard() {
+  const apiUrl =
+    process.env.API_PUBLIC_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API ||
+    'http://localhost:3001';
   const summary = await serverFetch(ordersApi.accessSummary()).catch(
     () => null,
   );
@@ -51,11 +56,18 @@ export default async function Dashboard() {
           ))}
         </ul>
       </section>
-      <form action="/auth/logout" method="post" className="mt-6">
-        <button className="rounded-lg bg-slate-900 px-5 py-3 text-white">
-          Log out
-        </button>
-      </form>
+      <div className="mt-6 flex flex-wrap gap-3">
+        <form action={`${apiUrl}/auth/logout`} method="post">
+          <button className="rounded-lg bg-slate-900 px-5 py-3 text-white">
+            Log out this session
+          </button>
+        </form>
+        <form action={`${apiUrl}/auth/logout-all`} method="post">
+          <button className="rounded-lg border border-red-600 px-5 py-3 text-red-700">
+            Log out all devices
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

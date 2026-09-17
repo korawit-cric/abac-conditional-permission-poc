@@ -12,7 +12,7 @@ const prompt = Prompt({
 
 export const metadata: Metadata = {
   title: 'oauth-oidc-state-pkce-poc',
-  description: 'External OAuth and internal encrypted-cookie session demo',
+  description: 'External OAuth with revocable PostgreSQL application sessions',
 };
 
 export default function RootLayout({

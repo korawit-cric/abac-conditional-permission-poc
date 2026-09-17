@@ -6,17 +6,22 @@ export default async function Home({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  const apiUrl =
+    process.env.API_PUBLIC_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API ||
+    'http://localhost:3001';
   return (
     <main className="mx-auto max-w-3xl p-10">
       <p className="mb-4 text-sm tracking-widest text-blue-600 uppercase">
         Turborepo authentication demo
       </p>
       <h1 className="mb-4 text-4xl font-bold">
-        External OAuth, internal session
+        External OAuth, revocable application session
       </h1>
       <p className="mb-6 text-lg">
         Walk through an authorization-code redirect with state and PKCE, then
-        see how the app creates its own encrypted-cookie session.
+        see how the API creates a revocable PostgreSQL-backed session.
       </p>
       {error && (
         <p role="alert" className="mb-6 rounded-lg bg-red-50 p-4 text-red-700">
@@ -24,7 +29,7 @@ export default async function Home({
         </p>
       )}
       <Link
-        href="/auth/login"
+        href={`${apiUrl}/auth/login`}
         className="inline-block rounded-lg bg-blue-700 px-6 py-3 font-semibold text-white"
       >
         Start mock ThaiD login
@@ -41,7 +46,7 @@ export default async function Home({
           ].map(([label, persona]) => (
             <Link
               key={persona}
-              href={`/auth/login?persona=${persona}`}
+              href={`${apiUrl}/auth/login?persona=${persona}`}
               className="underline"
             >
               {label}
@@ -70,7 +75,8 @@ export default async function Home({
         <li>Browser redirects through the mock authorization server.</li>
         <li>Callback validates state and exchanges code using PKCE.</li>
         <li>
-          App issues a 1-hour encrypted session and protects the dashboard.
+          API stores a hashed session token in PostgreSQL and protects the
+          dashboard.
         </li>
       </ol>
     </main>
