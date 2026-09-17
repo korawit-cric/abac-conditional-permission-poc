@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { seal } from '../../../lib/auth/crypto';
 import type { MockCode } from '../../../lib/auth/types';
-import { actors } from '../../../lib/auth/authorization';
+import { mockPersonas } from '../../../lib/auth/mock-personas';
 
 export function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -16,14 +16,14 @@ export function GET(request: NextRequest) {
   ) {
     return new NextResponse('Invalid authorization request', { status: 400 });
   }
+  const requestedPersona = params.get('persona') || 'mock-manager-10';
+  const subject = Object.hasOwn(mockPersonas, requestedPersona)
+    ? (requestedPersona as keyof typeof mockPersonas)
+    : 'mock-manager-10';
   const code = seal(
     {
-      sub:
-        actors[params.get('persona') || 'mock-manager-10']?.sub ||
-        'mock-manager-10',
-      name:
-        actors[params.get('persona') || 'mock-manager-10']?.name ||
-        'Store 10 manager',
+      sub: subject,
+      name: mockPersonas[subject],
       codeChallenge: params.get('code_challenge')!,
       redirectUri: callback.toString(),
       expiresAt: Date.now() + 60_000,

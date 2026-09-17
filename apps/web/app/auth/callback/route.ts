@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookieOptions, equal, open, seal } from '../../../lib/auth/crypto';
 import type { LoginAttempt, Session } from '../../../lib/auth/types';
-import { actors } from '../../../lib/auth/authorization';
+import { mockPersonas } from '../../../lib/auth/mock-personas';
 
 export async function GET(request: NextRequest) {
   const attempt = open<LoginAttempt>(
@@ -44,11 +44,14 @@ export async function GET(request: NextRequest) {
     subject?: string;
     name?: string;
   };
-  const actor = identity.subject ? actors[identity.subject] : undefined;
-  if (!actor || identity.name !== actor.name) return fail();
+  const subject = identity.subject;
+  const name = subject
+    ? mockPersonas[subject as keyof typeof mockPersonas]
+    : undefined;
+  if (!subject || !name || identity.name !== name) return fail();
   const session: Session = {
-    sub: identity.subject,
-    name: identity.name,
+    sub: subject,
+    name,
     expiresAt: Date.now() + 60 * 60_000,
   };
   const response = NextResponse.redirect(new URL('/dashboard', request.url));

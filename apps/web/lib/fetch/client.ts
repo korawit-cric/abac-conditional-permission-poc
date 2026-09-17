@@ -1,6 +1,9 @@
 import type { ApiEndpointWithBody } from '@repo/api-client';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API ||
+  'http://localhost:3001';
 
 /**
  * Helper type that represents either an endpoint with or without a body
@@ -24,6 +27,7 @@ export async function clientFetch<TResponse>(
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    credentials: 'include',
   });
 
   if (!response.ok) {
