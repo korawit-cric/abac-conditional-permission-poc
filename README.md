@@ -2,9 +2,9 @@
 
 This repository demonstrates **RBAC + ABAC authorization** with the Monex Turbo-style application layout:
 
-- **Next.js** owns the browser experience and mock login flow.
-- **NestJS** is the authoritative application API.
-- **Prisma + PostgreSQL** store users, roles, permission grants, store assignments, and orders.
+- **Next.js** owns the browser experience and protected-page rendering.
+- **NestJS** owns OAuth state/PKCE, callbacks, revocable sessions, and the application API.
+- **Prisma + PostgreSQL** store users, revocable sessions, roles, permission grants, store assignments, and orders.
 - **`@repo/api-client`** shares typed, runtime-independent endpoint contracts.
 - **Turborepo + npm workspaces** build and run the applications and packages together.
 
@@ -17,45 +17,41 @@ The local identity provider is a teaching mock. It does not connect to ThaiD and
 The original version kept demo actors, orders, and authorization rules inside the Next.js application. This version moves the authorization boundary into the normal backend stack:
 
 1. Actors, roles, permissions, store assignments, and orders are PostgreSQL records.
-2. NestJS decrypts and validates the application session cookie.
-3. NestJS resolves the session subject to the current database user.
-4. Role permissions come from `roles`, `permissions`, and `role_permissions`.
-5. Tenant, region, store, customer ownership, order state, and refund limit are included in Prisma query conditions.
-6. Next.js no longer exposes local `/api/orders/*` authorization routes.
-7. Shared order endpoint definitions live in `@repo/api-client`.
-8. A checked-in Prisma migration and repeatable seed create the demonstration data.
+2. NestJS owns the login redirect, state/PKCE validation, callback, and session creation.
+3. Each login creates an `auth_sessions` row containing a SHA-256 token hash.
+4. NestJS decrypts the cookie token, hashes it, and accepts only an active database session.
+5. Role permissions come from `roles`, `permissions`, and `role_permissions`.
+6. Tenant, region, store, customer ownership, order state, and refund limit are included in Prisma query conditions.
+7. The old frontend `authorize()` function, role map, actor fixtures, and order fixtures were removed.
+8. Next.js no longer exposes local `/api/orders/*` authorization routes.
+9. Shared order endpoint definitions live in `@repo/api-client`.
+10. Current-session and all-device logout revoke database rows immediately.
+11. A checked-in Prisma migration and repeatable seed create the demonstration data.
 
 ## System architecture
 
 ```text
-┌──────────────────────────────── Browser ────────────────────────────────┐
-│                                                                        │
-│  1. Start mock login                                                   │
-│  2. Carry HttpOnly cookies                                             │
-│  3. Render the dashboard                                               │
-│  4. Call NestJS with credentials                                       │
-│                                                                        │
-└──────────────────────┬───────────────────────────┬─────────────────────┘
-                       │                           │
-                       v                           v
-          ┌──────── Next.js :3000 ───────┐   ┌──────── NestJS :3001 ────────┐
-          │                              │   │                               │
-          │ mock provider                │   │ validate app_session          │
-          │ state + PKCE validation      │   │ load current actor            │
-          │ create app_session           │   │ check named permission        │
-          │ dashboard presentation       │   │ enforce resource conditions   │
-          │ server/client fetch adapters │   │ validate DTO and Origin       │
-          │                              │   │                               │
-          └──────────────────────────────┘   └──────────────┬────────────────┘
-                                                           │ Prisma
-                                                           v
-                                               ┌──── PostgreSQL :5433 ────┐
-                                               │ users                    │
-                                               │ roles + permissions      │
-                                               │ user/store assignments   │
-                                               │ stores + orders          │
-                                               └──────────────────────────┘
+Browser
+  |-- GET /auth/login ---------------------------> NestJS :3001
+  |                                                 create state + PKCE
+  |<-- oauth_attempt cookie + provider redirect --|
+  |-- follow mock-provider redirect -------------> NestJS mock provider
+  |<-- code + state callback ---------------------|
+  |-- GET /auth/callback ------------------------> NestJS
+  |                                                 validate attempt
+  |                                                 create AuthSession row
+  |<-- encrypted app_session token + /dashboard --|
+  |
+  |-- render /dashboard -------------------------> Next.js :3000
+                                                    forwards cookie to NestJS
+                                                    renders API decisions
+
+NestJS -> Prisma -> PostgreSQL
+                    users, roles, permissions, assignments,
+                    auth_sessions, stores, and orders
 ```
+
+Next.js does not validate OAuth state, exchange authorization codes, create application sessions, or revoke sessions. Those operations are backend-owned by NestJS.
 
 ### Trust boundaries
 
@@ -70,11 +66,35 @@ The browser is **not** trusted to provide its role, tenant, customer ID, assigne
 
 The dashboard shows authorization decisions for teaching purposes. Those labels do not protect data. Every real order endpoint performs authorization again inside NestJS and Prisma.
 
+### No frontend permission gateway
+
+There is no `authorize(actor, permission, order)` function in `apps/web`, and Next.js does not maintain a role-to-permission map. The previous `apps/web/lib/auth/authorization.ts` implementation was deleted.
+
+The frontend has only two authorization-related responsibilities:
+
+1. Send the HttpOnly application cookie automatically when it calls NestJS.
+2. Render the allow, deny, `401`, or `403` result returned by NestJS.
+
+Hiding a button can improve the interface, but it can never authorize an operation. A caller can bypass the page and invoke the API directly, so each NestJS endpoint must authenticate and authorize every request independently.
+
+The authoritative gateway is:
+
+```text
+NestJS controller
+  -> SessionService authenticates app_session
+  -> PostgreSQL supplies current actor attributes and role grants
+  -> OrdersService requires the named permission
+  -> Prisma query constrains the permitted resource rows
+  -> PostgreSQL returns or updates zero or one matching row
+```
+
+Even `GET /orders/access-summary` is only an explanatory API response. The dashboard does not reuse its result as proof that a later read, status update, or refund is allowed. The later endpoint repeats the complete server-side decision against current database data.
+
 ## Repository layout
 
 ```text
 apps/
-  web/                         Next.js UI, mock provider, login callback
+  web/                         Next.js UI and protected-page rendering
   api/                         NestJS controllers, services, DTOs, auth
   db/                          PostgreSQL Docker Compose service
 packages/
@@ -89,6 +109,8 @@ packages/
 
 The authorization-specific paths are:
 
+- [`apps/api/src/auth/auth.controller.ts`](apps/api/src/auth/auth.controller.ts)
+- [`apps/api/src/auth/auth.service.ts`](apps/api/src/auth/auth.service.ts)
 - [`apps/api/src/auth/session.service.ts`](apps/api/src/auth/session.service.ts)
 - [`apps/api/src/orders/orders.controller.ts`](apps/api/src/orders/orders.controller.ts)
 - [`apps/api/src/orders/orders.service.ts`](apps/api/src/orders/orders.service.ts)
@@ -98,46 +120,68 @@ The authorization-specific paths are:
 - [`packages/api-client/src/orders.ts`](packages/api-client/src/orders.ts)
 - [`apps/web/app/dashboard/page.tsx`](apps/web/app/dashboard/page.tsx)
 
-## Authentication flow
+## Authentication and session flow
 
 Authentication establishes who is acting. It does not grant access to an order by itself.
 
+### 1. Begin login
+
+The home page links to `GET /auth/login` on NestJS. NestJS creates random state and a PKCE verifier, encrypts them into a five-minute `oauth_attempt` cookie, and redirects to the mock provider with the S256 challenge.
+
+The encrypted attempt cookie avoids a login-attempt database table. State and PKCE are still created and validated by backend code, never by browser JavaScript.
+
+### 2. Validate the callback
+
+The mock provider redirects to NestJS `/auth/callback` with an authorization code and state. NestJS:
+
+1. decrypts `oauth_attempt`;
+2. checks its expiry;
+3. compares state using a constant-time comparison;
+4. exchanges the code using the stored PKCE verifier;
+5. maps the verified subject to an existing application `User`.
+
+### 3. Create a revocable session
+
+NestJS generates a new random 32-byte session token and a one-hour expiration. It stores only `SHA-256(token)` in PostgreSQL:
+
 ```text
-Browser             Next.js                 Mock provider
-   |                   |                          |
-   | GET /auth/login   |                          |
-   |------------------>| create state + verifier  |
-   |                   | set oauth_attempt cookie |
-   |<------------------| redirect                 |
-   |--------------------------------------------->|
-   |<-------------- authorization code + state ---|
-   | GET /auth/callback                           |
-   |------------------>| verify state + expiry    |
-   |                   | exchange code + verifier |
-   |                   |<------ mock identity ----|
-   |                   | map known subject        |
-   |<------------------| set app_session cookie   |
+AuthSession
+  id          internal row ID
+  tokenHash   SHA-256 hash; unique
+  userId      related application user
+  expiresAt   authoritative database expiry
+  revokedAt   null while active
+  createdAt   creation timestamp
 ```
 
-### Temporary login cookie
+The raw token and expiry are encrypted into the HttpOnly `app_session` cookie. A stolen database does not reveal reusable raw session tokens, while a copied browser cookie can be invalidated by revoking its database row.
 
-`oauth_attempt` contains the random state, PKCE verifier, and expiration. It is encrypted and authenticated with AES-256-GCM and lasts five minutes. The callback clears it after the exchange.
+Every login creates a separate row, so one user can have several independently tracked browser or device sessions.
 
-### Application session cookie
+### 4. Validate protected requests
 
-`app_session` contains only:
+For every order request, `SessionService`:
 
-```ts
-{
-  sub: string;
-  name: string;
-  expiresAt: number;
-}
-```
+1. reads and decrypts `app_session`;
+2. rejects an expired cookie payload;
+3. hashes the raw token;
+4. loads the matching `AuthSession` and related `User`;
+5. requires `revokedAt` to be null and database `expiresAt` to be in the future;
+6. loads current role grants and store assignments for authorization.
 
-It does not contain role or permission claims. Next.js and NestJS share `AUTH_COOKIE_SECRET`, so NestJS can validate the cookie produced by Next.js. NestJS uses `sub` to reload current access data from PostgreSQL on every request.
+### 5. Revoke sessions
 
-This makes role, store-assignment, region, and refund-limit changes effective on the next request. The cookie itself remains valid until expiration because this PoC does not have a central revocable session table.
+- `POST /auth/logout` sets `revokedAt` on the current active session and clears its cookie.
+- `POST /auth/logout-all` resolves the current active session's `userId`, sets `revokedAt` on every unrevoked session belonging to that user, and clears the current cookie.
+
+Clearing a cookie is browser cleanup. PostgreSQL revocation is authoritative: a copied cookie is rejected on its next request after the row is revoked.
+
+The authentication endpoints are:
+
+- `GET /auth/login`: create the protected OAuth attempt and redirect to the provider.
+- `GET /auth/callback`: validate state/PKCE, create `AuthSession`, set `app_session`, and redirect to Next.js.
+- `POST /auth/logout`: revoke only the session represented by the current cookie.
+- `POST /auth/logout-all`: revoke every unrevoked session row belonging to the current authenticated user.
 
 ## Database authorization model
 
@@ -146,12 +190,15 @@ The Prisma schema represents broad responsibility and conditional scope separate
 ```text
 User ── belongs to ──> Role ──< RolePermission >── Permission
   |
+  |──< AuthSession
+  |
   └──< UserStore >── Store ──< Order
 ```
 
 ### Models
 
-- `User` stores the provider subject, tenant, region, optional customer ID, refund limit, and assigned role.
+- `User` stores the provider subject, tenant, region, optional customer ID, refund limit, assigned role, and session relationship.
+- `AuthSession` stores a hashed opaque token, user relationship, expiration, and optional revocation timestamp.
 - `Role` stores one broad job responsibility such as `STORE_MANAGER`.
 - `Permission` stores named capabilities such as `order.refund`.
 - `RolePermission` is the many-to-many grant table.
@@ -200,19 +247,11 @@ These records create predictable allowed and denied cases.
 
 ## How NestJS authenticates a request
 
-Every order controller method receives the raw `Cookie` header and passes it to `SessionService.authenticate()`.
+Every order controller passes the raw `Cookie` header to `SessionService.authenticate()`. The cookie is only a protected bearer token container; PostgreSQL decides whether the login is still active.
 
-The service performs these steps:
+The service decrypts the cookie, hashes its random token, and performs an `auth_sessions` lookup that includes the related user, role grants, permission records, and assigned stores. A missing, expired, or revoked row returns `401`.
 
-1. Find the `app_session` cookie.
-2. Derive the AES key from `AUTH_COOKIE_SECRET` and the `app-session` purpose.
-3. Verify the AES-GCM authentication tag while decrypting.
-4. Parse the session and reject an expired or malformed value with `401`.
-5. Query `users` by `session.sub`.
-6. Include the user's role, role permissions, permission records, and assigned stores.
-7. Convert the result into a trusted `AuthenticatedActor` used by order policies.
-
-A session for a subject that no longer exists also returns `401`.
+A valid row becomes a trusted `AuthenticatedActor` containing the current database values for tenant, region, refund limit, customer ID, role, permissions, and store IDs. None of these authorization attributes are accepted from the frontend or cached in the session cookie.
 
 ## How RBAC and ABAC work together
 
@@ -381,8 +420,10 @@ Important values:
 ```dotenv
 DATABASE_URL="postgresql://postgres:postgres@localhost:5433/monex-root-template-v2-db?schema=public"
 API_PORT=3001
+API_PUBLIC_URL="http://localhost:3001"
 NEXT_PUBLIC_API="http://localhost:3001"
 WEB_ORIGIN="http://localhost:3000"
+WEB_URL="http://localhost:3000"
 AUTH_COOKIE_SECRET="replace-with-at-least-32-random-base64url-bytes"
 ```
 
@@ -499,10 +540,11 @@ npm run db:seed
 
 ## Migration, seed, and testing
 
-The initial authorization migration is checked in under:
+The authorization and revocable-session migrations are checked in under:
 
 ```text
 packages/prisma/prisma/migrations/20260917000000_add_conditional_authorization/
+packages/prisma/prisma/migrations/20260918000000_add_revocable_sessions/
 ```
 
 Useful commands:
@@ -521,20 +563,56 @@ The focused NestJS unit tests verify that:
 
 - tenant, region, and assigned stores are included in read queries;
 - all refund conditions appear in one update query;
-- a missing named permission prevents the database mutation call.
+- a missing named permission prevents the database mutation call;
+- session creation stores only a token hash;
+- revoked sessions are rejected;
+- all-device logout revokes every unrevoked row for the current user.
 
 ## Authorization freshness and auditability
 
-Authorization data is reloaded for every API request, so changing a role grant, store assignment, region, or refund limit affects the next decision. The session itself cannot be immediately revoked because it is a stateless encrypted cookie.
+Authorization data is reloaded for every API request, so changing a role grant, store assignment, region, or refund limit affects the next decision. Sessions are also checked in PostgreSQL on every request, so current-session and all-device revocation take effect immediately.
 
 A production system should add an audit table or event pipeline for sensitive operations. Useful evidence includes actor ID, action, resource ID, tenant/store, result, timestamp, request ID, and relevant before/after values. Audit records should be written consistently with the business mutation and should not expose sensitive internal policy details in public error responses.
+
+## Roll back to the stateless session version
+
+Commit `c0a58bc` (`docs: explain NestJS and PostgreSQL authorization flow`) is the last committed baseline before the application session was changed to a PostgreSQL-backed, revocable session. At that baseline:
+
+- Next.js created the encrypted `app_session` cookie after the mock callback;
+- the cookie contained the user subject, display name, and expiry;
+- NestJS decrypted the cookie and loaded authorization data by subject;
+- there was no `auth_sessions` table or lookup;
+- clearing the browser cookie was logout;
+- a copied cookie remained valid until its one-hour expiry;
+- revoking all sessions for one user was impossible.
+
+To inspect or run that exact version without changing the current branch:
+
+```sh
+git switch --detach c0a58bc
+```
+
+Return to the current branch with:
+
+```sh
+git switch main
+```
+
+For a rollback on a shared branch, prefer reverting the revocable-session implementation commit after it is committed:
+
+```sh
+git revert <revocable-session-change-commit>
+```
+
+Reverting preserves shared history. Do not use `git reset --hard` on a shared `main` branch. The rollback must remove the NestJS login/session endpoints, restore the former Next.js login routes, remove the `AuthSession` Prisma model and migration, and restore stateless-cookie validation in `SessionService`; reverting only the database migration would leave the applications incompatible.
+
+If the revocable-session migration has already reached a database, treat schema rollback separately. The application can stop using `auth_sessions` while leaving the table in place, which is safer than immediately dropping session history. Drop it only through a reviewed follow-up migration when its data is no longer needed.
 
 ## Deliberate limits
 
 This PoC intentionally leaves out:
 
 - a real ThaiD/OIDC integration;
-- server-side revocable sessions;
 - authorization audit-log persistence;
 - PostgreSQL row-level security;
 - trusted-device, network, time-window, country, and risk attributes;
